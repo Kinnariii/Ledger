@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Sparkles, Send, Plus, MessageSquare } from "lucide-react";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -163,10 +163,102 @@ function renderInlineFormatting(text: string): React.ReactNode {
 /* ─── Page Component ─────────────────────────────────────────────────── */
 
 export default function ChatPage() {
+  const [chatList, setChatList] = useState<Chat[]>(chats);
   const [activeChatId, setActiveChatId] = useState<string>("aichat-a1");
   const [inputValue, setInputValue] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
 
-  const activeChat = chats.find((c) => c.id === activeChatId) ?? chats[0];
+  const activeChat = chatList.find((c) => c.id === activeChatId) ?? chatList[0];
+
+  function handleSendMessage(e: FormEvent) {
+    e.preventDefault();
+    if (!inputValue.trim()) return;
+
+    const userMessageText = inputValue.trim();
+    const timeString = new Date().toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    const userMsg: Message = {
+      role: "USER",
+      content: userMessageText,
+      time: timeString,
+    };
+
+    // Append user message to state
+    setChatList((prev) =>
+      prev.map((c) => {
+        if (c.id === activeChatId) {
+          return {
+            ...c,
+            messages: [...c.messages, userMsg],
+          };
+        }
+        return c;
+      })
+    );
+    setInputValue("");
+    setIsTyping(true);
+
+    // Simulate AI response
+    setTimeout(() => {
+      let aiResponseText = "Understood. I have logged that request. Let me know if you would like me to draft an email, update CRM details, or fetch report statistics.";
+      
+      const lowerText = userMessageText.toLowerCase();
+      if (lowerText.includes("hello") || lowerText.includes("hi")) {
+        aiResponseText = "Hello Kinnari! How can I assist you with your business operations today?";
+      } else if (lowerText.includes("briefing") || lowerText.includes("summary")) {
+        aiResponseText = "Here is a quick summary of your active items:\n\n📋 **3 due tasks this week** (demo for Rahul, proposal for Priya, call follow-up with Aditya).\n💰 **Pipeline**: GrowthCo is your highest-priority proposal (₹1.25L).";
+      } else if (lowerText.includes("email") || lowerText.includes("draft")) {
+        aiResponseText = "Here is a drafted email follow-up:\n\n**Subject:** Follow-up on our discussion — Ledger Operations\n\nHi there,\n\nI wanted to follow up on our recent conversation regarding the AI integration. We are ready to assist with your CRM setup. Let us know a convenient time to sync up.\n\nBest regards,\nKinnari";
+      }
+
+      const aiMsg: Message = {
+        role: "ASSISTANT",
+        content: aiResponseText,
+        time: new Date().toLocaleTimeString("en-IN", {
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+      };
+
+      setChatList((prev) =>
+        prev.map((c) => {
+          if (c.id === activeChatId) {
+            return {
+              ...c,
+              messages: [...c.messages, aiMsg],
+            };
+          }
+          return c;
+        })
+      );
+      setIsTyping(false);
+    }, 1000);
+  }
+
+  function handleNewChat() {
+    const newId = `aichat-new-${Date.now()}`;
+    const newChatObj: Chat = {
+      id: newId,
+      title: `New Session`,
+      timestamp: "Just now",
+      messages: [
+        {
+          role: "ASSISTANT",
+          content: "Hello Kinnari! This is a new chat session. How can I help you manage your business operations today?",
+          time: new Date().toLocaleTimeString("en-IN", {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+        },
+      ],
+    };
+
+    setChatList((prev) => [newChatObj, ...prev]);
+    setActiveChatId(newId);
+  }
 
   return (
     /* Break out of the parent layout padding to fill full height */
@@ -178,7 +270,10 @@ export default function ChatPage() {
           <div className="text-stamp-label text-on-surface-variant mb-3">
             AI · AGENT
           </div>
-          <button className="btn-primary w-full flex items-center justify-center gap-2 text-body-sm">
+          <button
+            onClick={handleNewChat}
+            className="btn-primary w-full flex items-center justify-center gap-2 text-body-sm cursor-pointer"
+          >
             <Plus className="w-4 h-4" strokeWidth={1.5} />
             New Chat
           </button>
@@ -186,13 +281,13 @@ export default function ChatPage() {
 
         {/* Chat List */}
         <div className="flex-1 overflow-y-auto py-2">
-          {chats.map((chat) => {
+          {chatList.map((chat) => {
             const isActive = chat.id === activeChatId;
             return (
               <button
                 key={chat.id}
                 onClick={() => setActiveChatId(chat.id)}
-                className={`w-full text-left px-4 py-3 transition-colors ${
+                className={`w-full text-left px-4 py-3 transition-colors cursor-pointer ${
                   isActive
                     ? "bg-surface-container-lowest border-l-2 border-primary-container"
                     : "hover:bg-surface-container border-l-2 border-transparent"
@@ -247,7 +342,7 @@ export default function ChatPage() {
           {activeChat.messages.map((msg, idx) => {
             if (msg.role === "USER") {
               return (
-                <div key={idx} className="flex justify-end">
+                <div key={idx} className="flex justify-end animate-fade-in">
                   <div className="max-w-[70%]">
                     <div className="bg-surface-container-high rounded-lg p-3 ml-auto">
                       <p className="text-body-md text-on-surface">
@@ -264,7 +359,7 @@ export default function ChatPage() {
 
             // ASSISTANT message
             return (
-              <div key={idx} className="flex justify-start">
+              <div key={idx} className="flex justify-start animate-fade-in">
                 <div className="max-w-[70%]">
                   <div className="bg-surface-container-lowest rounded-lg p-3 card-index">
                     {/* Assistant identity header */}
@@ -289,11 +384,27 @@ export default function ChatPage() {
               </div>
             );
           })}
+
+          {/* Typing Indicator */}
+          {isTyping && (
+            <div className="flex justify-start">
+              <div className="bg-surface-container-lowest rounded-lg p-3 card-index max-w-[70%]">
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ─── Command Bar (Input) ─────────────────────────────────── */}
         <div className="px-8 py-4">
-          <div className="border border-on-surface bg-surface-container-lowest rounded-[var(--radius-default)] flex items-center gap-3 px-4 py-2.5">
+          <form
+            onSubmit={handleSendMessage}
+            className="border border-on-surface bg-surface-container-lowest rounded-[var(--radius-default)] flex items-center gap-3 px-4 py-2.5"
+          >
             <input
               type="text"
               value={inputValue}
@@ -302,12 +413,14 @@ export default function ChatPage() {
               className="flex-1 bg-transparent text-body-md text-on-surface placeholder:font-mono placeholder:text-[13px] placeholder:text-on-surface-variant placeholder:tracking-[0.05em] outline-none"
             />
             <button
-              className="btn-primary !px-3 !py-2 flex items-center gap-1.5 text-body-sm shrink-0"
+              type="submit"
+              disabled={!inputValue.trim()}
+              className="btn-primary !px-3 !py-2 flex items-center gap-1.5 text-body-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               aria-label="Send message"
             >
               <Send className="w-4 h-4" strokeWidth={1.5} />
             </button>
-          </div>
+          </form>
           <div className="text-center mt-2">
             <span className="text-[10px] font-mono text-on-surface-variant tracking-[0.05em]">
               LEDGER AI · RESPONSES MAY BE INACCURATE
