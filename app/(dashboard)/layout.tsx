@@ -156,7 +156,10 @@ export default function DashboardLayout({
           </div>
 
           {/* Logout */}
-          <button className="mt-3 flex items-center gap-2 text-body-sm text-on-surface-variant hover:text-error transition-colors w-full">
+          <button
+            onClick={() => window.location.href = "/login"}
+            className="mt-3 flex items-center gap-2 text-body-sm text-on-surface-variant hover:text-error transition-colors w-full cursor-pointer"
+          >
             <LogOut className="w-4 h-4" strokeWidth={1.5} />
             <span>Sign out</span>
           </button>
