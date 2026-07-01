@@ -1,0 +1,333 @@
+// Ledger — Prisma Schema
+// ========================
+// Multi-tenant AI Business Operations Platform
+//
+// INDEX STRATEGY: Every tenant-scoped table has an index on tenantId.
+// This serves two purposes:
+// 1. PERFORMANCE: All queries filter by tenantId first, so the index
+//    makes these O(log n) instead of full table scans.
+// 2. ISOLATION ENFORCEMENT: The scoped data-access layer (lib/db/scoped.ts)
+//    requires tenantId on every query. These indexes ensure that even if
+//    a query accidentally omits the filter, the DB optimizer would flag
+//    the missing index usage in EXPLAIN plans during review.
+//
+// COMPOUND INDEXES: Where queries commonly filter by tenantId + another
+// field (e.g. tenantId + contactId, tenantId + stage), we use compound
+// indexes so Postgres can satisfy the entire WHERE clause from a single
+// index scan without a separate filter step.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Tenant ──────────────────────────────────────────────────────────
+// The root entity for multi-tenancy. Not tenant-scoped itself.
+// onboardingData stores business context that feeds the AI agent's
+// system prompt, so it can give domain-specific answers without
+// per-message context injection.
+model Tenant {
+  id              String   @id @default(cuid())
+  name            String
+  businessType    String?
+  onboardingData  Json?    // { goals: string[], industry: string, etc. }
+  createdAt       DateTime @default(now())
+
+  users           User[]
+  contacts        Contact[]
+  opportunities   Opportunity[]
+  conversations   Conversation[]
+  aiChats         AiChatConversation[]
+  tasks           Task[]
+  auditLogs       AuditLog[]
+}
+
+// ─── User ────────────────────────────────────────────────────────────
+// Belongs to exactly one Tenant. googleId is the stable identifier
+// across OAuth sessions. Role determines authorization level.
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id             String    @id @default(cuid())
+  tenantId       String
+  googleId       String    @unique
+  email          String
+  name           String
+  avatarUrl      String?
+  role           UserRole  @default(MEMBER)
+  createdAt      DateTime  @default(now())
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens  RefreshToken[]
+  aiChats        AiChatConversation[]
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+// ─── RefreshToken ────────────────────────────────────────────────────
+// Implements refresh token rotation with reuse detection.
+// tokenHash: SHA-256 of the actual token (never store plaintext).
+// replacedByTokenId: when a token is rotated, this links to the new one.
+// If a revoked token is presented again, the entire family (chain of
+// replacedByTokenId links) is revoked — this signals token theft.
+model RefreshToken {
+  id                String    @id @default(cuid())
+  userId            String
+  tokenHash         String    @unique
+  expiresAt         DateTime
+  revoked           Boolean   @default(false)
+  replacedByTokenId String?   @unique
+  createdAt         DateTime  @default(now())
+  ipAddress         String?
+  userAgent         String?
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedByToken   RefreshToken? @relation("TokenRotation", fields: [replacedByTokenId], references: [id])
+  replacesToken     RefreshToken? @relation("TokenRotation")
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// ─── Contact ─────────────────────────────────────────────────────────
+// A customer/lead/prospect within a tenant's CRM.
+// tags[] enables flexible categorization without a separate join table.
+// source tracks acquisition channel for analytics.
+model Contact {
+  id             String    @id @default(cuid())
+  tenantId       String
+  name           String
+  phone          String?
+  email          String?
+  tags           String[]  // PostgreSQL native array
+  source         String?   // e.g. "inbound", "referral", "whatsapp", "manual"
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  opportunities  Opportunity[]
+  conversations  Conversation[]
+  tasks          Task[]
+
+  @@index([tenantId])
+  @@index([tenantId, name])    // Compound: contact search within tenant
+  @@index([tenantId, source])  // Compound: filter by source within tenant
+}
+
+// ─── Opportunity ─────────────────────────────────────────────────────
+// A sales opportunity linked to a contact. Stage enum models a simple
+// sales pipeline. aiNextBestAction and aiScore are populated by Gemini
+// during qualification workflows and on-demand regeneration.
+enum OpportunityStage {
+  NEW
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+model Opportunity {
+  id                String           @id @default(cuid())
+  tenantId          String
+  contactId         String
+  title             String
+  stage             OpportunityStage @default(NEW)
+  value             Float            @default(0)
+  aiNextBestAction  String?          // AI-generated recommendation, e.g. "Schedule a demo"
+  aiScore           Int?             // AI qualification score 0-100
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact           Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tasks             Task[]
+
+  @@index([tenantId])
+  @@index([tenantId, stage])      // Compound: pipeline view filters by stage
+  @@index([tenantId, contactId])  // Compound: contact detail shows linked opps
+}
+
+// ─── Conversation ────────────────────────────────────────────────────
+// A unified conversation thread with a contact, across any channel.
+// AI-generated fields (summary, sentiment, intent, recommendedNextAction)
+// are populated asynchronously after new messages arrive.
+enum Channel {
+  WHATSAPP
+  EMAIL
+  CALL
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model Conversation {
+  id                    String     @id @default(cuid())
+  tenantId              String
+  contactId             String
+  channel               Channel
+  aiSummary             String?    // AI-generated conversation summary
+  sentiment             Sentiment? // AI-detected sentiment
+  intent                String?    // AI-detected intent, e.g. "pricing inquiry"
+  recommendedNextAction String?    // AI-suggested next step
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact               Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages              Message[]
+
+  @@index([tenantId])
+  @@index([tenantId, contactId])  // Compound: contact detail shows conversations
+  @@index([tenantId, channel])    // Compound: filter inbox by channel
+}
+
+// ─── Message ─────────────────────────────────────────────────────────
+// Individual messages within a Conversation. Used for WhatsApp, Email,
+// and Call transcripts in a unified timeline.
+// senderType distinguishes customer messages from AI-generated and
+// human-agent responses.
+enum MessageDirection {
+  IN
+  OUT
+}
+
+enum SenderType {
+  CUSTOMER
+  AI
+  AGENT
+}
+
+model Message {
+  id              String           @id @default(cuid())
+  conversationId  String
+  direction       MessageDirection
+  content         String
+  senderType      SenderType
+  metadata        Json?            // Channel-specific data (e.g. WhatsApp message ID, email subject)
+  createdAt       DateTime         @default(now())
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])  // Compound: timeline ordering
+}
+
+// ─── AiChatConversation ──────────────────────────────────────────────
+// The business owner's chat sessions with the Ledger AI agent.
+// Separate from customer Conversations — this is the agent's own UI.
+model AiChatConversation {
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String
+  title      String   @default("New Conversation")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages   AiChatMessage[]
+
+  @@index([tenantId])
+  @@index([tenantId, userId])  // Compound: user's chat list within tenant
+}
+
+// ─── AiChatMessage ───────────────────────────────────────────────────
+// Messages within an AI chat session. Stores tool calls and results
+// for explainability and audit trail.
+enum AiChatRole {
+  USER
+  ASSISTANT
+  TOOL
+}
+
+model AiChatMessage {
+  id                    String     @id @default(cuid())
+  aiChatConversationId  String
+  role                  AiChatRole
+  content               String
+  toolCalls             Json?      // Serialized tool call requests from Gemini
+  toolResults           Json?      // Serialized tool execution results
+  createdAt             DateTime   @default(now())
+
+  aiChatConversation    AiChatConversation @relation(fields: [aiChatConversationId], references: [id], onDelete: Cascade)
+
+  @@index([aiChatConversationId])
+  @@index([aiChatConversationId, createdAt])  // Compound: message timeline
+}
+
+// ─── Task ────────────────────────────────────────────────────────────
+// Follow-up tasks, created by humans or AI (e.g. workflow automation).
+// Optionally linked to a Contact and/or Opportunity for context.
+enum TaskStatus {
+  PENDING
+  DONE
+}
+
+enum TaskCreator {
+  AI
+  USER
+}
+
+model Task {
+  id              String      @id @default(cuid())
+  tenantId        String
+  contactId       String?
+  opportunityId   String?
+  title           String
+  dueAt           DateTime?
+  status          TaskStatus  @default(PENDING)
+  createdBy       TaskCreator @default(USER)
+  createdAt       DateTime    @default(now())
+
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact         Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, status])          // Compound: dashboard pending tasks
+  @@index([tenantId, dueAt])           // Compound: upcoming tasks query
+  @@index([tenantId, contactId])       // Compound: contact detail tasks
+  @@index([tenantId, opportunityId])   // Compound: opportunity detail tasks
+}
+
+// ─── AuditLog ────────────────────────────────────────────────────────
+// Immutable log of every sensitive/state-changing action.
+// actorType: who performed the action (AI agent, human user, or system).
+// metadata: JSON with tool args, request details, or workflow step data.
+// This is append-only — no UPDATE or DELETE operations should ever
+// target this table.
+enum ActorType {
+  AI
+  USER
+  SYSTEM
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  tenantId    String
+  actorType   ActorType
+  actorId     String?   // userId for USER, "ledger-agent" for AI, null for SYSTEM
+  action      String    // e.g. "contact.create", "tool.search_contacts", "auth.token_reuse_detected"
+  entityType  String    // e.g. "Contact", "Opportunity", "RefreshToken"
+  entityId    String?   // ID of the affected entity
+  metadata    Json?     // Additional context (tool args, before/after state, etc.)
+  createdAt   DateTime  @default(now())
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])    // Compound: audit log timeline
+  @@index([tenantId, entityType])   // Compound: filter by entity type
+  @@index([tenantId, actorType])    // Compound: filter by actor
+}
