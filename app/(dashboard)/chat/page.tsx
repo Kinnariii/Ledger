@@ -1,433 +1,74 @@
-/**
- * AI Chat — Ledger
- * ================
- * Split-panel AI chat interface.
- *
- * Left panel (280px): Chat history list with "New Chat" button
- * Right panel (flex-1): Active conversation with message thread + command bar input
- *
- * All data is hardcoded demo data — no API calls.
- */
-"use client";
+import { getAiChatConversations } from "@/lib/db/scoped";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
+import ChatClient, { Chat, Message } from "./ChatClient";
 
-import { useState, type FormEvent } from "react";
-import { Sparkles, Send, Plus, MessageSquare } from "lucide-react";
-
-/* ─── Types ──────────────────────────────────────────────────────────── */
-
-interface Message {
-  role: "USER" | "ASSISTANT";
-  content: string;
-  time: string;
-}
-
-interface Chat {
-  id: string;
-  title: string;
-  timestamp: string;
-  messages: Message[];
-}
-
-/* ─── Hardcoded Demo Data ────────────────────────────────────────────── */
-
-const chats: Chat[] = [
-  {
-    id: "aichat-a1",
-    title: "Morning Briefing",
-    timestamp: "Today, 9:00 AM",
-    messages: [
-      {
-        role: "USER",
-        content: "Good morning! What's my day looking like?",
-        time: "9:00 AM",
-      },
-      {
-        role: "ASSISTANT",
-        content:
-          "Good morning, Kinnari! Here's your Ledger briefing:\n\n📋 **3 tasks due this week:**\n- Prepare demo for Rahul Sharma (Thu 2pm)\n- Send revised proposal to Priya Mehta (Fri EOD)\n- Follow up with Aditya Kumar on POC\n\n💰 **Pipeline Update:**\n- 2 qualified opportunities worth ₹1L total\n- GrowthCo deal (₹1.25L) is in proposal stage — highest priority\n\n🔥 **AI Alert:** Rahul's demo is in 2 days and you haven't shared the prep materials yet. Want me to draft a pre-demo email?",
-        time: "9:00 AM",
-      },
-    ],
-  },
-  {
-    id: "aichat-a2",
-    title: "Lead Qualification Help",
-    timestamp: "Yesterday",
-    messages: [
-      {
-        role: "USER",
-        content: "Can you score the RetailChain lead for me?",
-        time: "3:15 PM",
-      },
-      {
-        role: "ASSISTANT",
-        content:
-          "I've analyzed Aditya Kumar's lead from RetailChain:\n\n**AI Score: 55/100** (Medium)\n\n**Positive signals:**\n- Clear pain point (demand forecasting)\n- Willing to start with POC\n- 200+ SKUs = meaningful scale\n\n**Risk factors:**\n- Budget is limited\n- Decision requires partner approval\n- Currently using Excel (low tech maturity)\n\n**Recommendation:** Send a focused POC proposal for top 50 SKUs at ₹2.5L. This de-risks the investment for them.",
-        time: "3:15 PM",
-      },
-    ],
-  },
-  {
-    id: "aichat-a3",
-    title: "Email Draft for Priya",
-    timestamp: "Jun 29",
-    messages: [
-      {
-        role: "USER",
-        content:
-          "Draft a follow-up email to Priya about the enterprise proposal",
-        time: "11:00 AM",
-      },
-      {
-        role: "ASSISTANT",
-        content:
-          "Here's a draft follow-up email:\n\n**Subject:** Updated Enterprise CRM Proposal — Acme Digital Solutions\n\nHi Priya,\n\nThank you for your detailed questions about our CRM platform. As promised, here's the updated proposal addressing each point:\n\n1. **SSO:** Full SAML 2.0 support with Okta, Azure AD, and Google Workspace\n2. **API:** 10,000 records/min bulk import, with dedicated rate limits for enterprise\n3. **Pilot:** 30-day enterprise pilot for your team of 50, no commitment required\n\nI've attached the architecture diagram and API documentation. Happy to walk through any details on a call.\n\nBest regards,\nKinnari",
-        time: "11:00 AM",
-      },
-    ],
-  },
-];
-
-/* ─── Rich Text Renderer ─────────────────────────────────────────────── */
-
-/**
- * Parses assistant message content into React elements.
- * Supports: **bold**, bullet points (- item), numbered lists (1. item),
- * and newline paragraph breaks.
- */
-function renderMessageContent(content: string) {
-  const lines = content.split("\n");
-  const elements: React.ReactNode[] = [];
-
-  lines.forEach((line, i) => {
-    const trimmed = line.trim();
-
-    if (trimmed === "") {
-      // Empty line — paragraph break spacer
-      elements.push(<div key={i} className="h-2" />);
-      return;
-    }
-
-    // Detect bullet points
-    const bulletMatch = trimmed.match(/^- (.+)$/);
-    if (bulletMatch) {
-      elements.push(
-        <div key={i} className="flex gap-2 pl-1">
-          <span className="text-on-surface-variant shrink-0">•</span>
-          <span>{renderInlineFormatting(bulletMatch[1])}</span>
-        </div>
-      );
-      return;
-    }
-
-    // Detect numbered list items
-    const numberedMatch = trimmed.match(/^(\d+)\. (.+)$/);
-    if (numberedMatch) {
-      elements.push(
-        <div key={i} className="flex gap-2 pl-1">
-          <span className="text-on-surface-variant shrink-0">
-            {numberedMatch[1]}.
-          </span>
-          <span>{renderInlineFormatting(numberedMatch[2])}</span>
-        </div>
-      );
-      return;
-    }
-
-    // Regular paragraph line
-    elements.push(
-      <div key={i}>{renderInlineFormatting(trimmed)}</div>
-    );
-  });
-
-  return <>{elements}</>;
-}
-
-/**
- * Renders inline **bold** formatting within a line of text.
- */
-function renderInlineFormatting(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return (
-        <strong key={i} className="font-semibold">
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-    return <span key={i}>{part}</span>;
+function formatTime(date: Date): string {
+  return new Date(date).toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   });
 }
 
-/* ─── Page Component ─────────────────────────────────────────────────── */
+function formatDateLabel(date: Date): string {
+  const today = new Date();
+  const d = new Date(date);
+  
+  if (d.toDateString() === today.toDateString()) {
+    return `Today, ${formatTime(d)}`;
+  }
+  
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return "Yesterday";
+  }
 
-export default function ChatPage() {
-  const [chatList, setChatList] = useState<Chat[]>(chats);
-  const [activeChatId, setActiveChatId] = useState<string>("aichat-a1");
-  const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
+  return d.toLocaleDateString("en-IN", {
+    month: "short",
+    day: "numeric",
+  });
+}
 
-  const activeChat = chatList.find((c) => c.id === activeChatId) ?? chatList[0];
+export default async function ChatPage() {
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
 
-  function handleSendMessage(e: FormEvent) {
-    e.preventDefault();
-    if (!inputValue.trim()) return;
+  const chatSessions = await getAiChatConversations(session.tenantId, session.userId);
 
-    const userMessageText = inputValue.trim();
-    const timeString = new Date().toLocaleTimeString("en-IN", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
-    const userMsg: Message = {
-      role: "USER",
-      content: userMessageText,
-      time: timeString,
-    };
-
-    // Append user message to state
-    setChatList((prev) =>
-      prev.map((c) => {
-        if (c.id === activeChatId) {
-          return {
-            ...c,
-            messages: [...c.messages, userMsg],
-          };
+  // Map database conversations to client structure
+  const mappedChats: Chat[] = chatSessions.map((conv) => {
+    const messages: Message[] = conv.messages.map((m) => {
+      // Parse tool calls JSON column if present
+      let toolCalls: any[] = [];
+      if (m.toolCalls) {
+        try {
+          toolCalls = typeof m.toolCalls === "string" ? JSON.parse(m.toolCalls) : m.toolCalls;
+        } catch (e) {
+          toolCalls = [];
         }
-        return c;
-      })
-    );
-    setInputValue("");
-    setIsTyping(true);
-
-    // Simulate AI response
-    setTimeout(() => {
-      let aiResponseText = "Understood. I have logged that request. Let me know if you would like me to draft an email, update CRM details, or fetch report statistics.";
-      
-      const lowerText = userMessageText.toLowerCase();
-      if (lowerText.includes("hello") || lowerText.includes("hi")) {
-        aiResponseText = "Hello Kinnari! How can I assist you with your business operations today?";
-      } else if (lowerText.includes("briefing") || lowerText.includes("summary")) {
-        aiResponseText = "Here is a quick summary of your active items:\n\n📋 **3 due tasks this week** (demo for Rahul, proposal for Priya, call follow-up with Aditya).\n💰 **Pipeline**: GrowthCo is your highest-priority proposal (₹1.25L).";
-      } else if (lowerText.includes("email") || lowerText.includes("draft")) {
-        aiResponseText = "Here is a drafted email follow-up:\n\n**Subject:** Follow-up on our discussion — Ledger Operations\n\nHi there,\n\nI wanted to follow up on our recent conversation regarding the AI integration. We are ready to assist with your CRM setup. Let us know a convenient time to sync up.\n\nBest regards,\nKinnari";
       }
 
-      const aiMsg: Message = {
-        role: "ASSISTANT",
-        content: aiResponseText,
-        time: new Date().toLocaleTimeString("en-IN", {
-          hour: "numeric",
-          minute: "2-digit",
-        }),
+      return {
+        role: m.role as any, // "USER" or "ASSISTANT"
+        content: m.content,
+        time: formatTime(m.createdAt),
+        // If it's an assistant response, extract or mock reasoning, and map tool calls
+        reasoning: m.role === "ASSISTANT" ? (toolCalls.length > 0 ? `Executed tools to fetch data.` : undefined) : undefined,
+        toolCalls: toolCalls,
       };
+    });
 
-      setChatList((prev) =>
-        prev.map((c) => {
-          if (c.id === activeChatId) {
-            return {
-              ...c,
-              messages: [...c.messages, aiMsg],
-            };
-          }
-          return c;
-        })
-      );
-      setIsTyping(false);
-    }, 1000);
-  }
-
-  function handleNewChat() {
-    const newId = `aichat-new-${Date.now()}`;
-    const newChatObj: Chat = {
-      id: newId,
-      title: `New Session`,
-      timestamp: "Just now",
-      messages: [
-        {
-          role: "ASSISTANT",
-          content: "Hello Kinnari! This is a new chat session. How can I help you manage your business operations today?",
-          time: new Date().toLocaleTimeString("en-IN", {
-            hour: "numeric",
-            minute: "2-digit",
-          }),
-        },
-      ],
+    return {
+      id: conv.id,
+      title: conv.title,
+      timestamp: formatDateLabel(conv.updatedAt),
+      messages,
     };
+  });
 
-    setChatList((prev) => [newChatObj, ...prev]);
-    setActiveChatId(newId);
-  }
-
-  return (
-    /* Break out of the parent layout padding to fill full height */
-    <div className="-mx-12 -my-8 flex min-h-[calc(100vh-0px)]">
-      {/* ─── Left Panel: Chat History ──────────────────────────────── */}
-      <div className="w-[280px] shrink-0 border-r border-hairline bg-surface-container-low flex flex-col">
-        {/* Panel Header */}
-        <div className="p-4 pb-3 border-b border-hairline">
-          <div className="text-stamp-label text-on-surface-variant mb-3">
-            AI · AGENT
-          </div>
-          <button
-            onClick={handleNewChat}
-            className="btn-primary w-full flex items-center justify-center gap-2 text-body-sm cursor-pointer"
-          >
-            <Plus className="w-4 h-4" strokeWidth={1.5} />
-            New Chat
-          </button>
-        </div>
-
-        {/* Chat List */}
-        <div className="flex-1 overflow-y-auto py-2">
-          {chatList.map((chat) => {
-            const isActive = chat.id === activeChatId;
-            return (
-              <button
-                key={chat.id}
-                onClick={() => setActiveChatId(chat.id)}
-                className={`w-full text-left px-4 py-3 transition-colors cursor-pointer ${
-                  isActive
-                    ? "bg-surface-container-lowest border-l-2 border-primary-container"
-                    : "hover:bg-surface-container border-l-2 border-transparent"
-                }`}
-              >
-                <div className="flex items-start gap-2.5">
-                  <MessageSquare
-                    className={`w-4 h-4 shrink-0 mt-0.5 ${
-                      isActive
-                        ? "text-primary-container"
-                        : "text-on-surface-variant"
-                    }`}
-                    strokeWidth={1.5}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className={`text-body-md font-medium truncate ${
-                        isActive ? "text-on-surface" : "text-on-surface-variant"
-                      }`}
-                    >
-                      {chat.title}
-                    </div>
-                    <div className="text-utility-mono text-on-surface-variant mt-1">
-                      {chat.timestamp}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ─── Right Panel: Active Chat ──────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat Header */}
-        <div className="px-8 py-4 border-b border-hairline bg-surface-container-lowest flex items-center gap-2.5">
-          <Sparkles
-            className="w-4 h-4 text-primary-container"
-            strokeWidth={1.5}
-          />
-          <span className="text-utility-mono text-on-surface">
-            {activeChat.title}
-          </span>
-          <span className="text-utility-mono text-on-surface-variant ml-auto">
-            {activeChat.timestamp}
-          </span>
-        </div>
-
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
-          {activeChat.messages.map((msg, idx) => {
-            if (msg.role === "USER") {
-              return (
-                <div key={idx} className="flex justify-end animate-fade-in">
-                  <div className="max-w-[70%]">
-                    <div className="bg-surface-container-high rounded-lg p-3 ml-auto">
-                      <p className="text-body-md text-on-surface">
-                        {msg.content}
-                      </p>
-                    </div>
-                    <div className="text-utility-mono text-on-surface-variant mt-1.5 text-right">
-                      {msg.time}
-                    </div>
-                  </div>
-                </div>
-              );
-            }
-
-            // ASSISTANT message
-            return (
-              <div key={idx} className="flex justify-start animate-fade-in">
-                <div className="max-w-[70%]">
-                  <div className="bg-surface-container-lowest rounded-lg p-3 card-index">
-                    {/* Assistant identity header */}
-                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-hairline">
-                      <Sparkles
-                        className="w-3.5 h-3.5 text-primary-container"
-                        strokeWidth={1.5}
-                      />
-                      <span className="text-stamp-label text-primary-container">
-                        LEDGER
-                      </span>
-                    </div>
-                    {/* Message content */}
-                    <div className="text-body-md text-on-surface space-y-0.5">
-                      {renderMessageContent(msg.content)}
-                    </div>
-                  </div>
-                  <div className="text-utility-mono text-on-surface-variant mt-1.5">
-                    {msg.time}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Typing Indicator */}
-          {isTyping && (
-            <div className="flex justify-start">
-              <div className="bg-surface-container-lowest rounded-lg p-3 card-index max-w-[70%]">
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant animate-bounce" style={{ animationDelay: "300ms" }} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ─── Command Bar (Input) ─────────────────────────────────── */}
-        <div className="px-8 py-4">
-          <form
-            onSubmit={handleSendMessage}
-            className="border border-on-surface bg-surface-container-lowest rounded-[var(--radius-default)] flex items-center gap-3 px-4 py-2.5"
-          >
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ask Ledger anything..."
-              className="flex-1 bg-transparent text-body-md text-on-surface placeholder:font-mono placeholder:text-[13px] placeholder:text-on-surface-variant placeholder:tracking-[0.05em] outline-none"
-            />
-            <button
-              type="submit"
-              disabled={!inputValue.trim()}
-              className="btn-primary !px-3 !py-2 flex items-center gap-1.5 text-body-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              aria-label="Send message"
-            >
-              <Send className="w-4 h-4" strokeWidth={1.5} />
-            </button>
-          </form>
-          <div className="text-center mt-2">
-            <span className="text-[10px] font-mono text-on-surface-variant tracking-[0.05em]">
-              LEDGER AI · RESPONSES MAY BE INACCURATE
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <ChatClient initialChats={mappedChats} />;
 }
