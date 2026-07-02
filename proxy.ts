@@ -101,6 +101,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    "/((?!api/auth/callback|api/auth/login|api/auth/refresh|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api/auth/callback|api/auth/login|api/auth/refresh|api/auth/dev-login|api/webhooks/whatsapp|_next/static|_next/image|favicon.ico).*)",
   ],
 };
