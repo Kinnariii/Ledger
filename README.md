@@ -90,7 +90,7 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Copy `.env.example` to `.env` and fill in the required parameters:
+Copy `.env.example` to `.env` (or `.env.local`) and fill in the required parameters:
 ```bash
 # Database
 DATABASE_URL="postgresql://neondb_owner:xxxx@ep-something.us-east-1.aws.neon.tech/neondb?sslmode=require"
