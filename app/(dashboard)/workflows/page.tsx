@@ -90,6 +90,9 @@ const statusConfig = {
   },
 } as const;
 
+// TEMP: replace with session tenantId once Phase B auth lands
+const TEMP_TENANT_ID = "tenant-a";
+
 export default function WorkflowsPage() {
   const activeCount = workflows.filter((w) => w.status === "ACTIVE").length;
   const draftCount = workflows.filter((w) => w.status === "DRAFT").length;

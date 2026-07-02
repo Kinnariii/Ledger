@@ -5,16 +5,61 @@
  * 
  * This is the primary briefing screen with:
  * - KPI row (live data from DB)
- * - AI morning briefing
- * - Recent activity feed
+ * - AI morning briefing (hardcoded until Phase C)
+ * - Recent activity feed (real DB data)
  * - Command bar for AI chat
- * 
- * Full implementation in Step 5 (AI Chat) and Step 10 (KPIs).
- * For now: structural skeleton with design-accurate styling.
  */
 import { BarChart3, Users, Target, Clock, TrendingUp, Sparkles } from "lucide-react";
+import { getDashboardKPIs, getRecentActivity } from "@/lib/db/scoped";
 
-export default function DashboardPage() {
+// TEMP: replace with session tenantId once Phase B auth lands
+const TEMP_TENANT_ID = "tenant-a";
+
+/** Format Indian Rupee amounts with lakhs notation */
+function formatINR(amount: number): string {
+  if (amount >= 100000) {
+    const lakhs = amount / 100000;
+    return `₹${lakhs % 1 === 0 ? lakhs.toFixed(0) : lakhs.toFixed(1)}L`;
+  }
+  const s = amount.toString();
+  if (s.length <= 3) return `₹${s}`;
+  const last3 = s.slice(-3);
+  const remaining = s.slice(0, -3);
+  const grouped = remaining.replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+  return `₹${grouped},${last3}`;
+}
+
+/** Format relative time for activity feed */
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return date.toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return date.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+}
+
+export default async function DashboardPage() {
+  const [kpis, recentActivity] = await Promise.all([
+    getDashboardKPIs(TEMP_TENANT_ID),
+    getRecentActivity(TEMP_TENANT_ID),
+  ]);
+
+  const kpiCards = [
+    { label: "ACTIVE PIPELINE", value: formatINR(kpis.activePipeline), icon: TrendingUp, accent: "text-primary-container" },
+    { label: "OPEN OPPORTUNITIES", value: String(kpis.openOpportunities), icon: Target, accent: "text-secondary" },
+    { label: "PENDING TASKS", value: String(kpis.pendingTasks), icon: Clock, accent: "text-on-tertiary-container" },
+    { label: "CONTACTS", value: String(kpis.totalContacts), icon: Users, accent: "text-primary-container" },
+  ];
+
   return (
     <div>
       {/* Page Header */}
@@ -32,12 +77,7 @@ export default function DashboardPage() {
 
       {/* KPI Row */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        {[
-          { label: "ACTIVE PIPELINE", value: "₹3.4L", icon: TrendingUp, accent: "text-primary-container" },
-          { label: "OPEN OPPORTUNITIES", value: "4", icon: Target, accent: "text-secondary" },
-          { label: "PENDING TASKS", value: "4", icon: Clock, accent: "text-on-tertiary-container" },
-          { label: "CONTACTS", value: "8", icon: Users, accent: "text-primary-container" },
-        ].map((kpi) => (
+        {kpiCards.map((kpi) => (
           <div key={kpi.label} className="card-index p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-stamp-label text-on-surface-variant">
@@ -50,7 +90,7 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* AI Briefing Card */}
+      {/* AI Briefing Card — hardcoded until Phase C wires real AI */}
       <div className="card-memo card-memo-blue p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Sparkles className="w-4 h-4 text-primary-container" strokeWidth={1.5} />
@@ -59,9 +99,9 @@ export default function DashboardPage() {
           </span>
         </div>
         <div className="text-body-md text-on-surface space-y-2">
-          <p>📋 <strong>3 tasks due this week</strong> — Prepare demo for Rahul (Thu), send proposal to Priya (Fri), follow up with Aditya.</p>
-          <p>💰 <strong>Pipeline update</strong> — GrowthCo deal (₹1.25L) is in proposal stage and needs attention.</p>
-          <p>🔥 <strong>Alert:</strong> Rahul&apos;s demo is in 2 days. Demo materials haven&apos;t been shared yet.</p>
+          <p>📋 <strong>{kpis.pendingTasks} tasks pending</strong> — Check your tasks page for details.</p>
+          <p>💰 <strong>Pipeline update</strong> — {kpis.openOpportunities} open opportunities worth {formatINR(kpis.activePipeline)} in active pipeline.</p>
+          <p>🔥 <strong>Alert:</strong> Review your inbox for recent customer conversations.</p>
         </div>
         <div className="mt-4 pt-4 border-t border-hairline">
           <span className="text-utility-mono text-on-surface-variant">
@@ -79,15 +119,10 @@ export default function DashboardPage() {
           </span>
         </div>
         <div className="space-y-3">
-          {[
-            { time: "10:30 AM", text: "Rahul Sharma sent a WhatsApp message", type: "WHATSAPP" },
-            { time: "9:15 AM", text: "Ledger sent AI follow-up to Meera Joshi", type: "AI" },
-            { time: "Yesterday", text: "Discovery call with Aditya Kumar (12 min)", type: "CALL" },
-            { time: "Jun 28", text: "Email from Priya Mehta — Enterprise CRM Proposal", type: "EMAIL" },
-          ].map((item, i) => (
+          {recentActivity.map((item, i) => (
             <div key={i} className="flex items-start gap-3 py-2 border-b border-hairline last:border-0">
               <span className="text-utility-mono text-on-surface-variant w-20 shrink-0 pt-0.5">
-                {item.time}
+                {formatRelativeTime(item.time)}
               </span>
               <span className="text-body-sm text-on-surface flex-1">{item.text}</span>
               <span className={`stamp-badge text-[9px] ${

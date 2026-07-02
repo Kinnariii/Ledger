@@ -12,7 +12,19 @@
 
 import { PrismaClient, UserRole, OpportunityStage, Channel, Sentiment, MessageDirection, SenderType, TaskStatus, TaskCreator, ActorType, AiChatRole } from '@prisma/client';
 
-const prisma = new PrismaClient();
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+
+const prisma = new PrismaClient({
+  adapter,
+  log: ['info', 'warn', 'error'],
+});
 
 async function main() {
   console.log('🌱 Seeding Ledger database...');
