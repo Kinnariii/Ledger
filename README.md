@@ -107,8 +107,11 @@ JWT_SECRET="random-256-bit-hex-string"
 GEMINI_API_KEY="your-gemini-api-key"
 GEMINI_MODEL="gemini-flash-latest"
 
-# WhatsApp Webhook
+# WhatsApp Webhook & Integration
+WHATSAPP_PROVIDER="mock" # "mock" or "meta"
 WHATSAPP_VERIFY_TOKEN="ledger_verify_token_default"
+WHATSAPP_ACCESS_TOKEN="EAAG..." # (Meta access token)
+WHATSAPP_PHONE_NUMBER_ID="1234567890" # (Meta phone number ID)
 ```
 
 ### 3. Run Database Migrations & Seeding
@@ -124,11 +127,21 @@ npm run dev
 ```
 Open [http://localhost:3000](http://localhost:3000) to see the application.
 
+# WhatsApp Webhook Web Simulator
+Ledger includes a web-based WhatsApp client simulator at `/dev/whatsapp-simulator` (gated to development environment only):
+- Choose from existing contacts or input an untracked number.
+- Send messages that form standard Zod-validated Meta JSON webhook payloads.
+- Inject payloads directly to the real webhook handler endpoint `/api/webhooks/whatsapp`.
+
 ---
 
 ## 🧪 Testing
 
-Ledger contains 8 unit and integration tests verifying authentication rotation, reuse hijack alerts, database isolation, and AI tools mocking.
+Ledger contains 11 unit and integration tests verifying:
+1. **Authentication Rotation**: Token rotation mechanics, family validation, and security invalidation on token reuse.
+2. **Tenant Isolation**: Structural isolation queries in the data layer.
+3. **AI Tools**: Mock database executions and auditing.
+4. **Frontend Components**: React Testing Library tests on the interactive `CommandBar` component.
 
 Run the test suite:
 ```bash

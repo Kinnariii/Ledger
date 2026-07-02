@@ -88,7 +88,7 @@ describe("AI Agent Tools - Database Bindings and Auditing", () => {
 
   it("sendWhatsappTool should create conversation, append message, touch timestamps and log audit", async () => {
     // Mock contact verification
-    vi.mocked(prisma.contact.findFirst).mockResolvedValue({ id: "contact-1", name: "Rahul", tenantId } as any);
+    vi.mocked(prisma.contact.findFirst).mockResolvedValue({ id: "contact-1", name: "Rahul", tenantId, phone: "+919999999999" } as any);
     // Mock conversation find
     vi.mocked(prisma.conversation.findFirst).mockResolvedValue({ id: "conv-1" } as any);
     // Mock message create

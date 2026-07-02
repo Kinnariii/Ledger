@@ -73,18 +73,7 @@ export async function POST(request: NextRequest) {
 
     const systemInstruction = buildSystemInstruction(tenant);
 
-    // 6. Execute Gemini AI Agent with tool calling capabilities
-    const aiService = getAiService();
-    const result = await aiService.generateWithTools(
-      systemInstruction,
-      message,
-      history,
-      tenantId,
-      userId
-    );
-
-    // 7. Persist messages to the database
-    // Save User message
+    // 6. Save User message to the database immediately
     await prisma.aiChatMessage.create({
       data: {
         aiChatConversationId: conversation.id,
@@ -93,25 +82,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Save Assistant message (including reasoning and any tool calls/results)
-    const assistantMessage = await prisma.aiChatMessage.create({
-      data: {
-        aiChatConversationId: conversation.id,
-        role: AiChatRole.ASSISTANT,
-        content: result.text,
-        toolCalls: result.toolCalls.map((t) => ({ name: t.name, args: t.args })) as any,
-        toolResults: result.toolCalls.map((t) => ({ name: t.name, result: t.result })) as any,
-      },
-    });
-
-    // Update conversation updatedAt timestamp
-    await prisma.aiChatConversation.update({
-      where: { id: conversation.id },
-      data: { updatedAt: new Date() },
-    });
-
-    // 8. Stream the response tokens back to the client using Server-Sent Events (SSE)
+    // 7. Stream the response tokens back to the client using Server-Sent Events (SSE)
+    const aiService = getAiService();
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
       async start(controller) {
         try {
@@ -122,41 +96,67 @@ export async function POST(request: NextRequest) {
             )
           );
 
-          // Send reasoning explainability line
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "reasoning", content: result.reasoning })}\n\n`
-            )
+          const generator = aiService.generateWithToolsStream(
+            systemInstruction,
+            message,
+            history,
+            tenantId,
+            userId
           );
 
-          // Send executed tool calls for visibility
-          if (result.toolCalls.length > 0) {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_calls",
-                  content: result.toolCalls.map((t) => ({ name: t.name, args: t.args })),
-                })}\n\n`
-              )
-            );
+          let finalReasoning = "";
+          let finalContent = "";
+          let finalToolCalls: any[] = [];
+
+          for await (const event of generator) {
+            if (event.type === "reasoning") {
+              finalReasoning = event.content;
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "reasoning", content: event.content })}\n\n`
+                )
+              );
+            } else if (event.type === "tool_calls") {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "tool_calls", content: event.content })}\n\n`
+                )
+              );
+            } else if (event.type === "chunk") {
+              finalContent += event.content;
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "chunk", content: event.content })}\n\n`
+                )
+              );
+            } else if (event.type === "done") {
+              finalReasoning = event.reasoning;
+              finalContent = event.text;
+              finalToolCalls = event.toolCalls;
+            }
           }
 
-          // Simulate streaming chunk-by-chunk for smooth typing animation
-          const text = result.text;
-          const words = text.split(" ");
-          
-          for (let i = 0; i < words.length; i++) {
-            const chunk = words[i] + (i < words.length - 1 ? " " : "");
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: "chunk", content: chunk })}\n\n`)
-            );
-            // Small artificial delay for visual streaming typing effect
-            await new Promise((resolve) => setTimeout(resolve, 30));
-          }
+          // Save Assistant message (including reasoning and any tool calls/results) to DB
+          await prisma.aiChatMessage.create({
+            data: {
+              aiChatConversationId: conversation.id,
+              role: AiChatRole.ASSISTANT,
+              content: finalContent,
+              toolCalls: finalToolCalls.map((t) => ({ name: t.name, args: t.args })) as any,
+              toolResults: finalToolCalls.map((t) => ({ name: t.name, result: t.result })) as any,
+            },
+          });
+
+          // Update conversation updatedAt timestamp
+          await prisma.aiChatConversation.update({
+            where: { id: conversation.id },
+            data: { updatedAt: new Date() },
+          });
 
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
           controller.close();
-        } catch (err) {
+        } catch (err: any) {
+          console.error("Stream generation error:", err);
           controller.error(err);
         }
       },

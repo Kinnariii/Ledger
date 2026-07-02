@@ -6,21 +6,8 @@ const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "fallback-secret-at-least-32-chars-long-please"
 );
 
-export async function proxy(request: NextRequest) {
-  const { pathname, origin } = request.nextUrl;
-
-  // Protect all dashboard, crm, inbox, chat, and workflows routes
-  const isDashboardRoute =
-    pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/crm") ||
-    pathname.startsWith("/inbox") ||
-    pathname.startsWith("/chat") ||
-    pathname.startsWith("/workflows");
-
-  if (!isDashboardRoute) {
-    return NextResponse.next();
-  }
-
+export async function middleware(request: NextRequest) {
+  const { origin } = request.nextUrl;
   const accessToken = request.cookies.get("access_token")?.value;
 
   // 1. Validate the Access Token
@@ -86,21 +73,12 @@ export async function proxy(request: NextRequest) {
 
     return redirectResponse;
   } catch (err) {
-    console.error("Proxy refresh request error:", err);
+    console.error("Middleware refresh request error:", err);
     const loginUrl = new URL("/login", origin);
     return NextResponse.redirect(loginUrl.toString());
   }
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api/auth/callback, api/auth/login, api/auth/refresh (auth controllers)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    "/((?!api/auth/callback|api/auth/login|api/auth/refresh|api/auth/dev-login|api/webhooks/whatsapp|_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/dashboard/:path*", "/crm/:path*", "/inbox/:path*", "/chat/:path*", "/workflows/:path*"],
 };

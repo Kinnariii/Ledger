@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { OpportunityStage, TaskStatus, TaskCreator } from "@prisma/client";
+import { getWhatsAppClient } from "@/lib/whatsapp/factory";
 
 // Stage mapping to handle casing robustly
 const STAGE_MAP: Record<string, OpportunityStage> = {
@@ -127,7 +128,7 @@ export async function updateOpportunityTool(
   return updated;
 }
 
-// 4. Send WhatsApp message (mock)
+// 4. Send WhatsApp message
 export async function sendWhatsappTool(
   tenantId: string,
   args: {
@@ -146,38 +147,17 @@ export async function sendWhatsappTool(
     throw new Error(`Contact with ID ${contactId} not found in this tenant.`);
   }
 
-  // Find or create conversation for WHATSAPP
-  let conversation = await prisma.conversation.findFirst({
-    where: { tenantId, contactId, channel: "WHATSAPP" },
-  });
-
-  if (!conversation) {
-    conversation = await prisma.conversation.create({
-      data: {
-        tenantId,
-        contactId,
-        channel: "WHATSAPP",
-        sentiment: "NEUTRAL",
-        aiSummary: "AI initiated follow-up conversation.",
-      },
-    });
+  if (!contact.phone) {
+    throw new Error(`Contact "${contact.name}" does not have a phone number registered.`);
   }
 
-  // Create message log
-  const message = await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      direction: "OUT",
-      content,
-      senderType: "AI",
-    },
-  });
+  // Delegate sending message to the resolved WhatsAppClient adapter
+  const client = getWhatsAppClient();
+  const result = await client.sendMessage(tenantId, contactId, contact.phone, content);
 
-  // Touch conversation timestamp
-  await prisma.conversation.update({
-    where: { id: conversation.id },
-    data: { updatedAt: new Date() },
-  });
+  if (!result.success) {
+    throw new Error(result.error || "Failed to send WhatsApp message through integration");
+  }
 
   // Audit log entry
   await prisma.auditLog.create({
@@ -187,12 +167,12 @@ export async function sendWhatsappTool(
       actorId: "ledger-agent",
       action: "tool.send_whatsapp",
       entityType: "Message",
-      entityId: message.id,
-      metadata: { contactId, content, messageId: message.id },
+      entityId: result.messageId || "unknown-msg",
+      metadata: { contactId, content, messageId: result.messageId },
     },
   });
 
-  return { success: true, messageId: message.id, channel: "WHATSAPP" };
+  return { success: true, messageId: result.messageId, channel: "WHATSAPP" };
 }
 
 // 5. Fetch Business Metrics
