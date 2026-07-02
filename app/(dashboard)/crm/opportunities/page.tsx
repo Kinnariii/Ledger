@@ -1,11 +1,15 @@
 import { getOpportunities } from "@/lib/db/scoped";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 import OpportunitiesClient from "./OpportunitiesClient";
 
-// TEMP: replace with session tenantId once Phase B auth lands
-const TEMP_TENANT_ID = "tenant-a";
-
 export default async function OpportunitiesPage() {
-  const opportunities = await getOpportunities(TEMP_TENANT_ID);
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const opportunities = await getOpportunities(session.tenantId);
 
   // Cast stages to match client component types if needed
   const mappedOpportunities = opportunities.map((opp) => ({

@@ -1,11 +1,15 @@
 import { getContacts } from "@/lib/db/scoped";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 import ContactsClient from "./ContactsClient";
 
-// TEMP: replace with session tenantId once Phase B auth lands
-const TEMP_TENANT_ID = "tenant-a";
-
 export default async function ContactsPage() {
-  const contacts = await getContacts(TEMP_TENANT_ID);
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const contacts = await getContacts(session.tenantId);
 
   return <ContactsClient contacts={contacts} />;
 }

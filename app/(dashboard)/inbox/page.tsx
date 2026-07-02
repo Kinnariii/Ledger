@@ -1,11 +1,15 @@
 import { getConversations } from "@/lib/db/scoped";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 import InboxClient from "./InboxClient";
 
-// TEMP: replace with session tenantId once Phase B auth lands
-const TEMP_TENANT_ID = "tenant-a";
-
 export default async function InboxPage() {
-  const conversations = await getConversations(TEMP_TENANT_ID);
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const conversations = await getConversations(session.tenantId);
 
   // Cast sub-types to match frontend type requirements if needed
   const mappedConversations = conversations.map((conv) => ({

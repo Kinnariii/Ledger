@@ -90,10 +90,15 @@ const statusConfig = {
   },
 } as const;
 
-// TEMP: replace with session tenantId once Phase B auth lands
-const TEMP_TENANT_ID = "tenant-a";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 
-export default function WorkflowsPage() {
+export default async function WorkflowsPage() {
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
   const activeCount = workflows.filter((w) => w.status === "ACTIVE").length;
   const draftCount = workflows.filter((w) => w.status === "DRAFT").length;
   const pausedCount = workflows.filter((w) => w.status === "PAUSED").length;

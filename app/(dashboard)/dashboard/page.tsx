@@ -11,9 +11,9 @@
  */
 import { BarChart3, Users, Target, Clock, TrendingUp, Sparkles } from "lucide-react";
 import { getDashboardKPIs, getRecentActivity } from "@/lib/db/scoped";
-
-// TEMP: replace with session tenantId once Phase B auth lands
-const TEMP_TENANT_ID = "tenant-a";
+import { getSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
+import { prisma } from "@/lib/db/prisma";
 
 /** Format Indian Rupee amounts with lakhs notation */
 function formatINR(amount: number): string {
@@ -48,10 +48,21 @@ function formatRelativeTime(date: Date): string {
 }
 
 export default async function DashboardPage() {
-  const [kpis, recentActivity] = await Promise.all([
-    getDashboardKPIs(TEMP_TENANT_ID),
-    getRecentActivity(TEMP_TENANT_ID),
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const [kpis, recentActivity, user] = await Promise.all([
+    getDashboardKPIs(session.tenantId),
+    getRecentActivity(session.tenantId),
+    prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { name: true },
+    }),
   ]);
+
+  const firstName = user?.name ? user.name.split(" ")[0] : "user";
 
   const kpiCards = [
     { label: "ACTIVE PIPELINE", value: formatINR(kpis.activePipeline), icon: TrendingUp, accent: "text-primary-container" },
@@ -68,7 +79,7 @@ export default async function DashboardPage() {
           DASHBOARD · HOME
         </div>
         <h1 className="text-headline-md text-on-surface">
-          Good afternoon, Kinnari
+          Good afternoon, {firstName}
         </h1>
         <p className="text-body-md text-on-surface-variant mt-1">
           Here&apos;s your Ledger briefing for today.
@@ -135,6 +146,11 @@ export default async function DashboardPage() {
               </span>
             </div>
           ))}
+          {recentActivity.length === 0 && (
+            <div className="text-center py-6 text-body-sm text-on-surface-variant">
+              No recent activity.
+            </div>
+          )}
         </div>
       </div>
     </div>
